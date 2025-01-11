@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="lv">
+<head>
+  <meta charset="UTF-8" />
+  <title>Programma optimālā maršruta meklēšanai</title>
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="container">
+  <h1>Programma optimālā maršruta meklēšanai</h1>
+  <div class="tabs">
+    <button class="tablink" onclick="openTab('ClientsTab'); loadClients();">Klienti</button>
+    <button class="tablink" onclick="openTab('CouriersTab'); loadCouriers();">Kurjeri</button>
+    <button class="tablink" onclick="openTab('RoutesTab'); loadRoutes();">Maršruti</button>
+    <button class="tablink" onclick="openTab('MapTab'); loadRoutesForMap();">Karte</button>
+  </div>
+
+  <div id="ClientsTab" class="tabcontent">
+    <h2>Klienti</h2>
+    <div id="clientsList" class="list-section"></div>
+
+    <div class="form-section">
+      <h3>Pievienot klientu</h3>
+      <label>Vārds: <input type="text" id="clName"></label>
+      <label>Uzvārds: <input type="text" id="clSurname"></label>
+      <label>E-pasts: <input type="text" id="clEmail"></label>
+      <label>Tālrunis: <input type="text" id="clPhone"></label>
+      <button onclick="addClient()">Pievienot</button>
+    </div>
+  </div>
+
+  <div id="CouriersTab" class="tabcontent" style="display:none;">
+    <h2>Kurjeri</h2>
+    <div id="couriersList" class="list-section"></div>
+
+    <div class="form-section">
+      <h3>Pievienot kurjeru</h3>
+      <label>Vārds: <input type="text" id="coName"></label>
+      <label>Uzvārds: <input type="text" id="coSurname"></label>
+      <label>E-pasts: <input type="text" id="coEmail"></label>
+      <label>Tālrunis: <input type="text" id="coPhone"></label>
+      <button onclick="addCourier()">Pievienot</button>
+    </div>
+  </div>
+
+  <div id="RoutesTab" class="tabcontent" style="display:none;">
+    <h2>Maršruti</h2>
+    <div id="routesList" class="list-section"></div>
+
+    <div class="form-section">
+      <h3>Pievienot maršrutu (auto kurjera piešķiršana)</h3>
+      <label>Klienta ID: <input type="number" id="rtClient"></label>
+      <button onclick="addRoute()">Pievienot maršrutu</button>
+      <p>(Brīvs kurjers tiks piesaistīts automātiski)</p>
+    </div>
+
+    <hr/>
+    <div id="routeLocationsBlock" style="display:none;">
+      <h3>Lokācijas maršrutā #<span id="locRouteID"></span></h3>
+      <div id="locationsList" class="list-section"></div>
+
+      <div class="form-section">
+        <h4>Pievienot lokāciju</h4>
+        <label>Valsts: <input type="text" id="locCountry"></label>
+        <label>Pilsēta: <input type="text" id="locCity"></label>
+        <label>Adrese: <input type="text" id="locAddress"></label>
+        <button onclick="addLocation()">Pievienot</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="MapTab" class="tabcontent" style="display:none;">
+    <h2>Karte</h2>
+    <p>Izvēlieties maršrutu, lai redzētu ceļu starp lokācijām.</p>
+    <label>Maršruts:
+      <select id="mapRouteSelect"></select>
+    </label>
+    <button onclick="showOnMap()">Parādīt kartē</button>
+
+    <div id="map" style="width:100%; height:500px; margin-top:15px;"></div>
+  </div>
+</div>
+
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+></script>
+
+<script>
+function openTab(tabId) {
+  const tabs = document.getElementsByClassName('tabcontent');
+  for (let i=0; i<tabs.length; i++){
+    tabs[i].style.display = 'none';
+  }
+  document.getElementById(tabId).style.display = 'block';
+
+  if (tabId === 'MapTab' && typeof map !== 'undefined') {
+    setTimeout(() => {
+      map.invalidateSize();
+    }, 200);
+  }
+}
+
+async function loadClients() {
+  const resp = await fetch('/api/clients');
+  const data = await resp.json();
+  const container = document.getElementById('clientsList');
+  container.innerHTML = '';
+  data.forEach(cl => {
+    const div = document.createElement('div');
+    div.className = 'item-card';
+    div.innerHTML = `
+      <b>ID:</b> ${cl.clientID} |
+      <b>Vārds:</b> ${cl.name} |
+      <b>Uzvārds:</b> ${cl.surname} |
+      <b>E-pasts:</b> ${cl.email} |
+      <b>Tālrunis:</b> ${cl.phoneNumber} |
+      <b>Maršruts:</b> ${cl.routeID || 'Nav'}
+      <br/>
+      <button onclick="editClient(${cl.clientID})">Labot</button>
+      <button onclick="deleteClient(${cl.clientID})">Dzēst</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+async function addClient() {
+  const name = document.getElementById('clName').value;
+  const surname = document.getElementById('clSurname').value;
+  const email = document.getElementById('clEmail').value;
+  const phone = document.getElementById('clPhone').value;
+  if(!name || !surname || !email || !phone){
+    alert('Aizpildiet visus laukus!');
+    return;
+  }
+  const resp = await fetch('/api/clients', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ name, surname, email, phoneNumber: phone })
+  });
+  const result = await resp.json();
+  alert(JSON.stringify(result));
+  loadClients();
+}
+
+async function editClient(id) {
+  const newName = prompt('Jauns vārds:');
+  const newSurname = prompt('Jauns uzvārds:');
+  const newEmail = prompt('Jauns e-pasts:');
+  const newPhone = prompt('Jauns tālrunis:');
+  if(!newName || !newSurname || !newEmail || !newPhone){
+    alert('Atcelts vai nepilni dati');
+    return;
+  }
+  const resp = await fetch(`/api/clients/${id}`, {
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      name:newName,
+      surname:newSurname,
+      email:newEmail,
+      phoneNumber:newPhone
+    })
+  });
+  const r = await resp.json();
+  alert(JSON.stringify(r));
+  loadClients();
+}
+
+async function deleteClient(id) {
+  if(!confirm('Dzēst klientu?')) return;
+  const resp = await fetch(`/api/clients/${id}`, {method:'DELETE'});
+  const r = await resp.json();
+  alert(JSON.stringify(r));
+  loadClients();
+}
+
+async function loadCouriers() {
+  const resp = await fetch('/api/couriers');
+  const data = await resp.json();
+  const container = document.getElementById('couriersList');
+  container.innerHTML = '';
+  data.forEach(co => {
+    const div = document.createElement('div');
+    div.className = 'item-card';
+    div.innerHTML = `
+      <b>ID:</b> ${co.courierID} |
+      <b>Vārds:</b> ${co.name} |
+      <b>Uzvārds:</b> ${co.surname} |
+      <b>E-pasts:</b> ${co.email} |
+      <b>Tālrunis:</b> ${co.phoneNumber} |
+      <b>Maršruts:</b> ${co.routeID || 'Nav'}
+      <br/>
+      <button onclick="editCourier(${co.courierID})">Labot</button>
+      <button onclick="deleteCourier(${co.courierID})">Dzēst</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+async function addCourier() {
+  const name = document.getElementById('coName').value;
+  const surname = document.getElementById('coSurname').value;
+  const email = document.getElementById('coEmail').value;
+  const phone = document.getElementById('coPhone').value;
+  if(!name || !surname || !email || !phone){
+    alert('Aizpildiet visus laukus!');
+    return;
+  }
+  const resp = await fetch('/api/couriers', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ name, surname, email, phoneNumber: phone })
+  });
+  const r = await resp.json();
+  alert(JSON.stringify(r));
+  loadCouriers();
+}
+
+async function editCourier(id) {
+  const newName = prompt('Jauns vārds:');
+  const newSurname = prompt('Jauns uzvārds:');
+  const newEmail = prompt('Jauns e-pasts:');
+  const newPhone = prompt('Jauns tālrunis:');
+  if(!newName || !newSurname || !newEmail || !newPhone){
+    alert('Atcelts vai nepilni dati');
+    return;
+  }
+  const resp = await fetch(`/api/couriers/${id}`, {
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      name:newName,
+      surname:newSurname,
+      email:newEmail,
+      phoneNumber:newPhone
+    })
+  });
+  const re = await resp.json();
+  alert(JSON.stringify(re));
+  loadCouriers();
+}
+
+async function deleteCourier(id) {
+  if(!confirm('Dzēst kurjeru?')) return;
+  const resp = await fetch(`/api/couriers/${id}`, {method:'DELETE'});
+  const r = await resp.json();
+  alert(JSON.stringify(r));
+  loadCouriers();
+}
+
+async function loadRoutes() {
+  const resp = await fetch('/api/routes');
+  const data = await resp.json();
+  const container = document.getElementById('routesList');
+  container.innerHTML = '';
+  data.forEach(rt => {
+    const div = document.createElement('div');
+    div.className = 'item-card';
+    div.innerHTML = `
+      <b>MaršrutsID:</b> ${rt.routeID} |
+      <b>Klients:</b> ${rt.clientName} |
+      <b>Kurjers:</b> ${rt.courierName}
+      <br/>
+      <button onclick="editRoute(${rt.routeID})">Labot</button>
+      <button onclick="deleteRoute(${rt.routeID})">Dzēst</button>
+      <button onclick="openLocations(${rt.routeID})">Labot lokācijas</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+async function addRoute() {
+  const clientID = document.getElementById('rtClient').value;
+  if(!clientID){
+    alert('Norādiet klienta ID!');
+    return;
+  }
+  const resp = await fetch('/api/routes', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ clientID })
+  });
+  const r = await resp.json();
+  alert(JSON.stringify(r));
+  loadRoutes();
+}
+
+async function editRoute(routeID) {
+  const newClientID = prompt('Jauns clientID:');
+  const newCourierID = prompt('Jauns courierID:');
+  if(!newClientID || !newCourierID){
+    alert('Atcelts vai nepilni dati');
+    return;
+  }
+  const resp = await fetch(`/api/routes/${routeID}`, {
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ clientID:newClientID, courierID:newCourierID })
+  });
+  const data = await resp.json();
+  alert(JSON.stringify(data));
+  loadRoutes();
+}
+
+async function deleteRoute(routeID) {
+  if(!confirm('Dzēst maršrutu?')) return;
+  const resp = await fetch(`/api/routes/${routeID}`, {method:'DELETE'});
+  const data = await resp.json();
+  alert(JSON.stringify(data));
+  loadRoutes();
+}
+
+let currentRouteID = null;
+
+function openLocations(routeID) {
+  currentRouteID = routeID;
+  document.getElementById('locRouteID').textContent = routeID;
+  document.getElementById('routeLocationsBlock').style.display = 'block';
+  loadLocations(routeID);
+}
+
+async function loadLocations(routeID) {
+  const resp = await fetch(`/api/routes/${routeID}/locations`);
+  const data = await resp.json();
+  const container = document.getElementById('locationsList');
+  container.innerHTML = '';
+  if(Array.isArray(data)){
+    data.forEach(loc => {
+      const d = document.createElement('div');
+      d.className = 'item-card';
+      d.innerHTML = `
+        <b>ID:</b> ${loc.locationID} |
+        <b>Valsts:</b> ${loc.country} |
+        <b>Pilsēta:</b> ${loc.city} |
+        <b>Adrese:</b> ${loc.address}
+        <br/>
+        <button onclick="editLocation(${loc.locationID})">Labot</button>
+        <button onclick="deleteLocation(${loc.locationID})">Dzēst</button>
+      `;
+      container.appendChild(d);
+    });
+  } else {
+    container.textContent = JSON.stringify(data);
+  }
+}
+
+async function addLocation() {
+  const country = document.getElementById('locCountry').value;
+  const city = document.getElementById('locCity').value;
+  const address = document.getElementById('locAddress').value;
+  if(!country || !city || !address){
+    alert('Aizpildiet visus lokācijas laukus!');
+    return;
+  }
+  const resp = await fetch(`/api/routes/${currentRouteID}/locations`, {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ country, city, address })
+  });
+  const r = await resp.json();
+  alert(JSON.stringify(r));
+  loadLocations(currentRouteID);
+}
+
+async function editLocation(locationID) {
+  const newCountry = prompt('Jauna valsts:');
+  const newCity = prompt('Jauna pilsēta:');
+  const newAddress = prompt('Jauna adrese:');
+  if(!newCountry || !newCity || !newAddress){
+    alert('Atcelts vai nepilni dati');
+    return;
+  }
+  const resp = await fetch(`/api/routes/${currentRouteID}/locations/${locationID}`, {
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({
+      country:newCountry, city:newCity, address:newAddress
+    })
+  });
+  const re = await resp.json();
+  alert(JSON.stringify(re));
+  loadLocations(currentRouteID);
+}
+
+async function deleteLocation(locationID) {
+  if(!confirm('Dzēst lokāciju?')) return;
+  const resp = await fetch(`/api/routes/${currentRouteID}/locations/${locationID}`, {
+    method:'DELETE'
+  });
+  const r = await resp.json();
+  alert(JSON.stringify(r));
+  loadLocations(currentRouteID);
+}
+
+let map, mapLayer;
+
+function initMap() {
+  map = L.map('map').setView([56.9496, 24.1052], 7);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap'
+  }).addTo(map);
+
+  mapLayer = L.layerGroup().addTo(map);
+}
+
+async function loadRoutesForMap() {
+  const resp = await fetch('/api/routes');
+  const data = await resp.json();
+  const sel = document.getElementById('mapRouteSelect');
+  sel.innerHTML = '';
+  data.forEach(rt => {
+    const opt = document.createElement('option');
+    opt.value = rt.routeID;
+    opt.textContent = `Maršruts #${rt.routeID}: [${rt.clientName}] - [${rt.courierName}]`;
+    sel.appendChild(opt);
+  });
+}
+
+async function showOnMap() {
+  mapLayer.clearLayers();
+  const routeID = document.getElementById('mapRouteSelect').value;
+  const resp = await fetch(`/api/routes/${routeID}/locations`);
+  const locs = await resp.json();
+  if(!Array.isArray(locs) || locs.length < 2){
+    alert('Maršruta aprēķinam nepieciešamas vismaz 2 lokācijas!');
+    return;
+  }
+
+  let coords = [];
+  for(const l of locs){
+    const fullAddr = `${l.address}, ${l.city}, ${l.country}`;
+    const c = await geocode(fullAddr);
+    if(c) coords.push(c);
+  }
+  if(coords.length < 2){
+    alert('Maršruta aprēķinam nepieciešamas vismaz 2 lokācijas!');
+    return;
+  }
+
+  let waypoints = coords.map(c => `${c[1]},${c[0]}`).join(';');
+  let url = `https://router.project-osrm.org/route/v1/driving/${waypoints}?overview=full&geometries=polyline&steps=false`;
+
+  try {
+    let osrmResp = await fetch(url);
+    let osrmData = await osrmResp.json();
+    if(osrmData.code !== 'Ok') {
+      console.log(osrmData);
+      alert('Neizdevās aprēķināt ceļu. Kļūda: ' + osrmData.code);
+      return;
+    }
+    let routeObj = osrmData.routes[0];
+    let polyStr = routeObj.geometry;
+    let routeCoords = decodePolyline(polyStr);
+
+    let routeLine = L.polyline(routeCoords, { color:'red', weight:4 });
+    mapLayer.addLayer(routeLine);
+
+    for(let i=0; i<coords.length; i++){
+      let marker = L.marker(coords[i]).addTo(mapLayer);
+      marker.bindPopup(`Lokācija ID=${locs[i].locationID}`);
+    }
+    map.fitBounds(routeLine.getBounds());
+  } catch(err) {
+    console.error(err);
+    alert('Neizdevās iegūt maršrutu. Pārbaudiet konsoli.');
+  }
+}
+
+function decodePolyline(str, precision=5) {
+  let factor = Math.pow(10, precision);
+  let coords = [];
+  let index = 0, lat = 0, lng = 0;
+
+  while(index < str.length) {
+    let b, shift = 0, result = 0;
+    do {
+      b = str.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while(b >= 0x20);
+    let dlat = (result & 1) ? ~(result >> 1) : (result >> 1);
+    lat += dlat;
+
+    shift = 0;
+    result = 0;
+    do {
+      b = str.charCodeAt(index++) - 63;
+      result |= (b & 0x1f) << shift;
+      shift += 5;
+    } while(b >= 0x20);
+    let dlng = (result & 1) ? ~(result >> 1) : (result >> 1);
+    lng += dlng;
+
+    coords.push([lat / factor, lng / factor]);
+  }
+  return coords;
+}
+
+async function geocode(addr) {
+  let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}`;
+  let resp = await fetch(url);
+  let data = await resp.json();
+  if(data && data.length>0){
+    let lat = parseFloat(data[0].lat);
+    let lon = parseFloat(data[0].lon);
+    return [lat, lon];
+  }
+  return null;
+}
+
+window.addEventListener('load', () => {
+  initMap();
+});
+</script>
+</body>
+</html>
